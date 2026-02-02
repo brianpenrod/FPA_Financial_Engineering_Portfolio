@@ -1,43 +1,56 @@
-import csv
+import pandas as pd
 import random
 from faker import Faker
-from datetime import datetime, timedelta
+import config  # Importing our new config file
 
-def generate_roster():
+def generate_roster(num_employees=100):
+    """
+    Generates a synthetic roster with granularity:
+    - Roles (salary bands)
+    - Health Plan Selection (Family vs Single drives variance)
+    """
     fake = Faker()
     
-    roles = ['Analyst', 'Manager', 'Director', 'VP']
-    departments = ['Sales', 'Engineering', 'G&A']
-    
-    salary_ranges = {
-        'Analyst': (70000, 90000),
-        'Manager': (110000, 150000),
-        'Director': (160000, 200000),
-        'VP': (220000, 280000)
+    # Salary Bands (Base only)
+    salary_bands = {
+        'Analyst': (75000, 95000),
+        'Manager': (120000, 160000),
+        'Director': (170000, 210000),
+        'VP': (230000, 300000)
     }
     
-    roster_file = 'current_roster.csv'
+    data = []
     
-    with open(roster_file, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(['Employee_ID', 'Name', 'Role', 'Department', 'Base_Salary', 'Start_Date'])
+    for _ in range(num_employees):
+        role = random.choices(
+            ['Analyst', 'Manager', 'Director', 'VP'], 
+            weights=[0.4, 0.3, 0.2, 0.1]
+        )[0]
         
-        for i in range(50):
-            emp_id = 1000 + i + 1
-            name = fake.name()
-            role = random.choice(roles)
-            department = random.choice(departments)
-            
-            # Generate salary based on role
-            min_sal, max_sal = salary_ranges[role]
-            salary = random.randint(min_sal, max_sal)
-            
-            # Generate start date within last 3 years
-            start_date = fake.date_between(start_date='-3y', end_date='today')
-            
-            writer.writerow([emp_id, name, role, department, salary, start_date])
-            
-    print('Roster generation complete')
+        # Select Health Plan (Weighted: 40% Family, 50% Single, 10% Waived)
+        health_plan = random.choices(
+            ['Family', 'Single', 'Waived'], 
+            weights=[0.40, 0.50, 0.10]
+        )[0]
+
+        row = {
+            'Employee_ID': fake.unique.random_number(digits=5),
+            'Name': fake.name(),
+            'Role': role,
+            'Department': random.choice(['Sales', 'Product', 'Engineering', 'G&A']),
+            'Base_Salary': random.randint(*salary_bands[role]),
+            'Health_Plan_Selection': health_plan,
+            'Start_Date': fake.date_between(start_date='-2y', end_date='today')
+        }
+        data.append(row)
+
+    df = pd.DataFrame(data)
+    df.to_csv('data/current_roster.csv', index=False)
+    print(f"✅ Generated {num_employees} employees with Health Plan granularity.")
 
 if __name__ == "__main__":
+    # Ensure a 'data' folder exists or change path
+    import os
+    if not os.path.exists('data'):
+        os.makedirs('data')
     generate_roster()
