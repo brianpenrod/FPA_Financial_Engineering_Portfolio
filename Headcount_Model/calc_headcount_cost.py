@@ -1,55 +1,74 @@
 import pandas as pd
+import numpy as np
+import config # Pulling assumptions from the control panel
 
-def calculate_fully_loaded(row):
-    base_salary = row['Base_Salary']
-    role = row['Role']
+def calculate_taxes_and_benefits(row):
+    """
+    Row-wise logic to calculate Fully Loaded Cost.
+    Includes:
+    1. OASDI Cap logic
+    2. Additional Medicare Tax (>200k)
+    3. Dynamic Health Benefit lookup
+    """
+    base = row['Base_Salary']
     
-    # Bonus
-    if role in ['Analyst', 'Manager']:
-        bonus_rate = 0.10
-    else: # Director, VP
-        bonus_rate = 0.20
-    bonus = base_salary * bonus_rate
+    # 1. BONUS CALC
+    # Safe .get() handles roles not in config
+    bonus_pct = config.BONUS_TARGETS.get(row['Role'], 0.10) 
+    bonus_amt = base * bonus_pct
     
-    # Employer FICA (6.2% capped at $11,439)
-    fica_tax = min(base_salary * 0.062, 11439)
+    gross_comp = base + bonus_amt
+
+    # 2. FICA - SOCIAL SECURITY (OASDI)
+    # Tax applies only up to the Wage Base
+    taxable_oasdi = min(gross_comp, config.OASDI_WAGE_BASE)
+    oasdi_tax = taxable_oasdi * config.OASDI_RATE
+
+    # 3. FICA - MEDICARE
+    # Standard Rate
+    medicare_std = gross_comp * config.MEDICARE_RATE
+    # Additional Medicare Tax (High Earner Surtax)
+    medicare_add = max(0, (gross_comp - config.ADDITIONAL_MEDICARE_THRESHOLD) * config.ADDITIONAL_MEDICARE_RATE)
     
-    # Employer Medicare (1.45% no cap)
-    medicare_tax = base_salary * 0.0145
+    total_medicare = medicare_std + medicare_add
+
+    # 4. FUTA (Federal Unemployment)
+    futa_tax = config.FUTA_WAGE_BASE * config.FUTA_RATE
+
+    # 5. BENEFITS BURDEN
+    # Lookup cost based on plan selection
+    health_cost = config.HEALTH_PLAN_COSTS.get(row['Health_Plan_Selection'], 0)
     
-    # FUTA ($42 flat)
-    futa_tax = 42
+    # TOTAL FULLY LOADED COST
+    fully_loaded = gross_comp + oasdi_tax + total_medicare + futa_tax + health_cost
     
-    # Benefits ($12,000 flat)
-    benefits = 12000
-    
-    fully_loaded_cost = base_salary + bonus + fica_tax + medicare_tax + futa_tax + benefits
-    return fully_loaded_cost
+    return pd.Series([bonus_amt, oasdi_tax, total_medicare, futa_tax, health_cost, fully_loaded])
 
 def main():
-    # Load current roster
+    # Load Data
     try:
-        df = pd.read_csv('current_roster.csv')
+        df = pd.read_csv('data/current_roster.csv')
     except FileNotFoundError:
-        print("Error: current_roster.csv not found.")
+        print("❌ Error: Roster not found. Run generate_roster.py first.")
         return
 
-    # Calculate Fully Loaded Cost
-    df['Fully_Loaded_Cost'] = df.apply(calculate_fully_loaded, axis=1)
+    # Apply Logic
+    cols = ['Bonus_Amt', 'Tax_OASDI', 'Tax_Medicare', 'Tax_FUTA', 'Benefits_Cost', 'Fully_Loaded_Cost']
+    df[cols] = df.apply(calculate_taxes_and_benefits, axis=1)
+
+    # --- REPORTING ---
+    # Calculate Burden Rate (Loaded / Base)
+    avg_burden = df['Fully_Loaded_Cost'].sum() / df['Base_Salary'].sum()
     
-    # Summary Table
-    total_base = df['Base_Salary'].sum()
-    total_loaded = df['Fully_Loaded_Cost'].sum()
-    burden_rate = total_loaded / total_base if total_base > 0 else 0
+    print("\n--- 📊 HEADCOUNT COST ANALYSIS ---")
+    print(f"Total Base Salary:      ${df['Base_Salary'].sum():,.0f}")
+    print(f"Total Benefits Spend:   ${df['Benefits_Cost'].sum():,.0f}")
+    print(f"Total Fully Loaded:     ${df['Fully_Loaded_Cost'].sum():,.0f}")
+    print(f"Blended Burden Rate:    {avg_burden:.2f}x")
     
-    print("\n--- Headcount Cost Summary ---")
-    print(f"Total Base Salary:      ${total_base:,.2f}")
-    print(f"Total Fully Loaded Cost: ${total_loaded:,.2f}")
-    print(f"Burden Rate:            {burden_rate:.2f}x")
-    
-    # Save detailed result
-    df.to_csv('roster_with_costs.csv', index=False)
-    print("\nDetailed results saved to 'roster_with_costs.csv'")
+    # Export for Power BI
+    df.to_csv('data/roster_with_costs.csv', index=False)
+    print("\n✅ Calculation Complete. Exported to data/roster_with_costs.csv")
 
 if __name__ == "__main__":
     main()
